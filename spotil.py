@@ -5,6 +5,7 @@ import urllib.request
 import re
 import os
 import yt_dlp
+import urllib.parse
 
 
 from dotenv import load_dotenv
@@ -51,16 +52,37 @@ def get_auth_header(token):
 #   Function to get the track names from the specified spotify playlist
 
 def get_playlist_tracks(token, playlist_id):
-
     readInstalledFile = open("dependencies/installed.txt","r")
     writeInstalledFile = open("dependencies/installed.txt","a")
 
+    # 首先获取播放列表信息
+    playlist_url = f"https://api.spotify.com/v1/playlists/{playlist_id.split('?')[0]}"
+    headers = get_auth_header(token)
+    playlist_response = requests.get(playlist_url, headers=headers)
+    playlist_data = playlist_response.json()
+    playlist_name = playlist_data.get('name', 'Unknown Playlist')
+    
+    # 确保下载目录存在
+    os.makedirs(f"downloaded/{playlist_name}", exist_ok=True)
+
     field = "fields=tracks.items(track(name, artists(name)))"
-    url = "https://api.spotify.com/v1/playlists/" + playlist_id + "&" + field
+    url = f"https://api.spotify.com/v1/playlists/{playlist_id.split('?')[0]}?{field}"
     headers = get_auth_header(token)
 
     result = requests.get(url, headers = headers)
-    result = result.json()['tracks']['items']
+    print(f"Status Code: {result.status_code}")
+    print(f"Response: {result.text}")
+    
+    try:
+        json_response = result.json()
+        if 'tracks' not in json_response:
+            print("Error: 'tracks' field not found in response")
+            print("Full response structure:", json_response.keys())
+            return
+        result = json_response['tracks']['items']
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        return
 
     trackList = []
     alreadyInstalled = []
@@ -81,7 +103,6 @@ def get_playlist_tracks(token, playlist_id):
             new.append(currentData)
             writeInstalledFile.writelines(f"{currentData}\n")
 
-    
     print("---------END---------")
     print("\n")
 
@@ -89,8 +110,7 @@ def get_playlist_tracks(token, playlist_id):
 
     for track in new:
         print(f"New: {track}")
-        get_youtube_link(track)
-
+        get_youtube_link(track, playlist_name)
 
     print("---------------------")
     print("\n")
@@ -100,17 +120,18 @@ def get_playlist_tracks(token, playlist_id):
 
 #   Function to query Youtube API for the link to the top related video associated with the song name pulled from the spotify playlist
     
-def get_youtube_link(track_name):
-    search_keyword = track_name.replace(" ", "+")
-
-    html = urllib.request.urlopen("https://www.youtube.com/results?search_query=" + search_keyword + "+audio")
+def get_youtube_link(track_name, playlist_name):
+    # Properly encode the search keyword for URL
+    search_keyword = urllib.parse.quote(track_name + " audio")
+    
+    html = urllib.request.urlopen("https://www.youtube.com/results?search_query=" + search_keyword)
     video_ids = re.findall(r"watch\?v=(\S{11})", html.read().decode())
     url = f"https://www.youtube.com/watch?v={video_ids[0]}"
-    download_video(url)
+    download_video(url, playlist_name)
 
 # Function to download videos associated with the previously created links
     
-def download_video(url):
+def download_video(url, playlist_name):
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{
@@ -118,7 +139,7 @@ def download_video(url):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'outtmpl': r'.\downloaded\%(title)s.%(ext)s',
+        'outtmpl': f'downloaded/{playlist_name}/%(title)s.%(ext)s',
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
